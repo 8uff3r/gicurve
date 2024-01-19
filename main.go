@@ -18,6 +18,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"gioui.org/x/colorpicker"
+	"gioui.org/x/component"
 	ts "github.com/tinyspline/go"
 )
 
@@ -51,6 +53,9 @@ var pts []float64
 var spline *Sp
 var dragPt int
 
+var showSettings bool
+var state *colorpicker.State
+
 func draw(window *app.Window) error {
 
 	spline = &Sp{degree: 3}
@@ -62,6 +67,8 @@ func draw(window *app.Window) error {
 	// clearBtn is a clickable widget
 	var clearBtn widget.Clickable
 	var transformBtn widget.Clickable
+	var modalBtn widget.Clickable
+	settingModal := component.NewModal()
 
 	go func() {
 		for {
@@ -76,6 +83,10 @@ func draw(window *app.Window) error {
 	a1 := 0
 	type C = layout.Context
 	type D = layout.Dimensions
+
+	state = &colorpicker.State{}
+	state.SetColor(color.NRGBA{R: 0xFF, A: 0xFF})
+
 	for {
 		select {
 		case e := <-events:
@@ -87,46 +98,81 @@ func draw(window *app.Window) error {
 				gtx := layout.NewContext(&ops, e)
 
 				in := layout.UniformInset(unit.Dp(8))
-				layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(
-					gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						w, h := screenWidth*.8, screenHeight
-						drawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
-						return layout.Dimensions{Size: image.Pt(screenWidth*.8, screenHeight)}
-					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+
+				layout.Stack{Alignment: layout.Center}.Layout(gtx,
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(
+							gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								w, h := screenWidth*.8, screenHeight
+								drawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
+								return layout.Dimensions{Size: image.Pt(screenWidth*.8, screenHeight)}
+							}),
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+									layout.Rigid(
+										func(gtx C) D {
+											return in.Layout(gtx,
+												func(gtx C) D {
+													text := "Clear Scene"
+													if clearBtn.Clicked(gtx) {
+														spline.curve = nil
+														pts = nil
+														dragPt = -1
+														window.Invalidate()
+													}
+													btn := material.Button(th, &clearBtn, text)
+													return btn.Layout(gtx)
+												},
+											)
+										},
+									),
+									layout.Rigid(
+										func(gtx C) D {
+											return in.Layout(gtx,
+												func(gtx C) D {
+													text := "To bezier curves"
+													if transformBtn.Clicked(gtx) {
+														settingModal.VisibilityAnimation.State = component.Appearing
+													}
+													btn := material.Button(th, &transformBtn, text)
+													return btn.Layout(gtx)
+												},
+											)
+										},
+									),
+								)
+							}),
+						)
+					}))
+
+				modalInset := layout.UniformInset(unit.Dp(88))
+				settingModal.Widget = func(gtx layout.Context, th *material.Theme, anim *component.VisibilityAnimation) layout.Dimensions {
+					println("HIII")
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(
-								func(gtx C) D {
-									return in.Layout(gtx,
-										func(gtx C) D {
-											text := "Clear Scene"
-											if clearBtn.Clicked(gtx) {
-												spline.curve = nil
-												pts = nil
-												dragPt = -1
-												window.Invalidate()
-											}
-											btn := material.Button(th, &clearBtn, text)
-											return btn.Layout(gtx)
-										},
-									)
-								},
-							),
-							layout.Rigid(
-								func(gtx C) D {
-									return in.Layout(gtx,
-										func(gtx C) D {
-											text := "To bezier curves"
-											btn := material.Button(th, &transformBtn, text)
-											return btn.Layout(gtx)
-										},
-									)
-								},
-							),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return modalInset.Layout(gtx,
+									func(gtx C) D {
+										text := "To bezier curves"
+										if modalBtn.Clicked(gtx) {
+											settingModal.VisibilityAnimation.State = component.Invisible
+										}
+										btn := material.Button(th, &modalBtn, text)
+										return btn.Layout(gtx)
+									},
+								)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return modalInset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return colorpicker.Picker(th, state, "Pick the color").Layout(gtx)
+								})
+							}),
 						)
 					}),
-				)
+					)
+				}
+				settingModal.Layout(gtx, th)
 				e.Frame(gtx.Ops)
 			}
 			acks <- struct{}{}

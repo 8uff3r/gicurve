@@ -38,7 +38,7 @@ func DrawSpline(s *Sp, num int, ops *op.Ops) {
 	dim := s.curve.GetDimension()
 
 	p := DrawLine(&pts, dim, ops)
-	c := color.NRGBA{R: 0xFF, A: 0xFF}
+	c := state.Color()
 	paint.FillShape(ops, c, clip.Stroke{Path: p.End(), Width: 4}.Op())
 }
 
