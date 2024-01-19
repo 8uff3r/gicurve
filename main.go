@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -17,6 +16,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
 	ts "github.com/tinyspline/go"
 )
 
@@ -27,23 +28,17 @@ const (
 
 type App struct{}
 
-var pressed = false
-
 func main() {
-	// go func() {
-	// 	http.ListenAndServe("localhost:8080", nil)
-	// }()
 	// Start CPU profiling
 	f, err := os.Create("cpu.pprof")
 	if err != nil {
 		panic(err)
 	}
 	pprof.StartCPUProfile(f)
-	func() {
+	go func() {
+		window := app.NewWindow(app.Size(unit.Dp(screenWidth), unit.Dp(screenHeight)))
 
-		window := app.NewWindow(app.MaxSize(unit.Dp(screenWidth), unit.Dp(screenHeight)))
-		err := draw(window)
-		if err != nil {
+		if err := draw(window); err != nil {
 			log.Fatal(err)
 		}
 		pprof.StopCPUProfile()
@@ -61,32 +56,80 @@ func draw(window *app.Window) error {
 	spline = &Sp{degree: 3}
 
 	var ops op.Ops
-	// a1 := 0
-	// a2 := 1
+	events := make(chan event.Event)
+	acks := make(chan struct{})
+	th := material.NewTheme()
+	// clearBtn is a clickable widget
+	var clearBtn widget.Clickable
+	var transformBtn widget.Clickable
+
+	go func() {
+		for {
+			ev := window.NextEvent()
+			events <- ev
+			<-acks
+			if _, ok := ev.(system.DestroyEvent); ok {
+				return
+			}
+		}
+	}()
+	a1 := 0
+	type C = layout.Context
+	type D = layout.Dimensions
 	for {
-		switch e := window.NextEvent().(type) {
-		case system.DestroyEvent:
-			return e.Err
-		case system.FrameEvent:
-			gtx := layout.NewContext(&ops, e)
+		select {
+		case e := <-events:
+			switch e := e.(type) {
+			case system.DestroyEvent:
+				acks <- struct{}{}
+				return e.Err
+			case system.FrameEvent:
+				gtx := layout.NewContext(&ops, e)
 
-			layout.Flex{Axis: layout.Horizontal}.Layout(
-				gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					// w, h := 900, 800
-					// drawScene(gtx.Ops, gtx.Queue, a1, w, h)
-					return layout.Dimensions{Size: image.Pt(screenWidth*.8, screenHeight)}
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					// op.Offset(image.Pt(gtx.Dp(200), gtx.Dp(150))).Add(gtx.Ops)
-					rect := clip.Rect{Min: image.Pt(0, 0), Max: image.Pt(screenWidth, screenHeight)}
-					paint.FillShape(gtx.Ops, color.NRGBA{B: 0xFF, A: 0xFF}, rect.Op())
-
-					return layout.Dimensions{Size: image.Pt(screenWidth*.2, screenHeight)}
-				}),
-			)
-			// Update display.
-			e.Frame(gtx.Ops)
+				in := layout.UniformInset(unit.Dp(8))
+				layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(
+					gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						w, h := screenWidth*.8, screenHeight
+						drawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
+						return layout.Dimensions{Size: image.Pt(screenWidth*.8, screenHeight)}
+					}),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(
+								func(gtx C) D {
+									return in.Layout(gtx,
+										func(gtx C) D {
+											text := "Clear Scene"
+											if clearBtn.Clicked(gtx) {
+												spline.curve = nil
+												pts = nil
+												dragPt = -1
+												window.Invalidate()
+											}
+											btn := material.Button(th, &clearBtn, text)
+											return btn.Layout(gtx)
+										},
+									)
+								},
+							),
+							layout.Rigid(
+								func(gtx C) D {
+									return in.Layout(gtx,
+										func(gtx C) D {
+											text := "To bezier curves"
+											btn := material.Button(th, &transformBtn, text)
+											return btn.Layout(gtx)
+										},
+									)
+								},
+							),
+						)
+					}),
+				)
+				e.Frame(gtx.Ops)
+			}
+			acks <- struct{}{}
 		}
 	}
 }
@@ -96,13 +139,28 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 		if x, ok := ev.(pointer.Event); ok {
 			switch x.Kind {
 			case pointer.Drag:
-				fmt.Printf("DRAG: %d\n", dragPt)
+				var xd float32
+				var yd float32
+				if x.Position.X > float32(w) {
+					xd = float32(w)
+				} else if x.Position.X < 0 {
+					xd = 0
+				} else {
+					xd = x.Position.X
+				}
+				if x.Position.Y > float32(h) {
+					yd = float32(h)
+				} else if x.Position.Y < 0 {
+					yd = 0
+				} else {
+					yd = x.Position.Y
+				}
 
 				if dragPt >= 0 {
 					if spline.curve == nil || spline == nil {
-						pts[dragPt], pts[dragPt+1] = float64(x.Position.X), float64(x.Position.Y)
+						pts[dragPt], pts[dragPt+1] = float64(xd), float64(yd)
 					} else {
-						spline.curve.SetControlPointVec2At(dragPt/2, ts.NewVec2(float64(x.Position.X), float64(x.Position.Y)))
+						spline.curve.SetControlPointVec2At(dragPt/2, ts.NewVec2(float64(xd), float64(yd)))
 					}
 					goto cont
 				}
@@ -113,7 +171,6 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 					}
 					dragPt = -1
 					if In((pts[k]), (pts[k+1]), x.Position.X, x.Position.Y, 14) {
-						fmt.Printf("IN: %d\n", k)
 						dragPt = k
 						if spline.curve == nil || spline == nil {
 							pts[k], pts[k+1] = float64(x.Position.X), float64(x.Position.Y)
@@ -124,11 +181,9 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 					}
 				}
 				pts = append(pts, float64(x.Position.X), float64(x.Position.Y))
-				fmt.Printf("press %0.0f %0.0f, %v\n", x.Position.X, x.Position.Y, pts)
 				spline.NewSpline(&pts)
 
 			case pointer.Release:
-				println("RELEASED")
 				dragPt = -1
 			}
 		}
@@ -151,12 +206,9 @@ cont:
 	}
 	area := clip.Rect(image.Rect(0, 0, w, h)).Push(ops)
 	pointer.InputOp{
-		Tag:          tag,
-		Kinds:        pointer.Press | pointer.Release | pointer.Drag,
-		ScrollBounds: image.Rect(0, 0, w, h),
+		Tag:   tag,
+		Kinds: pointer.Press | pointer.Release | pointer.Drag,
+		// ScrollBounds: image.Rect(0, 0, w, h),
 	}.Add(ops)
 	area.Pop()
-	// defer clip.Rect{Max: image.Pt(100, 400)}.Push(ops).Pop()
-	// paint.ColorOp{Color: color.NRGBA{G: 0xFF, A: 0xFF}}.Add(ops)
-	// paint.PaintOp{}.Add(ops)
 }
