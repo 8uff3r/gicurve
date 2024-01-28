@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"image"
 	"image/color"
 
@@ -22,12 +23,13 @@ func GetPointAt(spline ts.BSpline, u float64) ([]float64, []float64) {
 	res := net.GetResult()
 	return res, pts
 }
-func (s *Sp) NewSpline(pts *[]float64) {
+func (s *Sp) NewSpline(pts *[]float64) error {
 	if len(*pts)/2 < s.degree+1 {
-		return
+		return errors.New("less than enough ctrl points")
 	}
 	s.curve = ts.NewBSpline(len(*pts)/2, 2, s.degree)
 	s.curve.SetControlPoints(*pts)
+	return nil
 }
 func DrawSpline(s *Sp, num int, ops *op.Ops) {
 	if s == nil || s.curve == nil {

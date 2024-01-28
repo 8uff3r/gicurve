@@ -52,3 +52,6 @@ func In(a, b float64, x, y float32, r int) bool {
 	yf := float64(y)
 	return math.Sqrt(math.Pow(xf-a, 2)+math.Pow(yf-b, 2))-float64(r)-2 <= 0
 }
+func RmElem(slice []float64, from, num int) []float64 {
+	return append(slice[:from], slice[from+num:]...)
+}
