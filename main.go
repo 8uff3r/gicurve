@@ -65,6 +65,8 @@ var dragPt int
 var showSettings bool
 var state *colorpicker.State
 
+var sceneMode int
+
 var xIcon *widget.Icon
 
 func draw(window *app.Window) error {
@@ -81,6 +83,8 @@ func draw(window *app.Window) error {
 	var colorBtn widget.Clickable
 	var deletePointBtn widget.Clickable
 	var modalBtn widget.Clickable
+	var swInterpolBtn widget.Clickable
+	var swDrawBtn widget.Clickable
 
 	settingModal := component.NewModal()
 	colorModal := NewColorPickerWithModal(th.ContrastBg)
@@ -122,12 +126,49 @@ func draw(window *app.Window) error {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(
 							gtx,
 							layout.Rigid(func(gtx C) D {
-								w, h := screenWidth*.8, screenHeight
+								w, h := screenWidth*.75, screenHeight
 								drawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
-								return D{Size: image.Pt(screenWidth*.8, screenHeight)}
+								return D{Size: image.Pt(int(w), h)}
 							}),
 							layout.Flexed(1, func(gtx C) D {
 								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return in.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return layout.Flex{Axis: layout.Horizontal}.Layout(
+												gtx,
+												layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+													if swDrawBtn.Clicked(gtx) {
+														sceneMode = 0
+													}
+													btn := material.Button(th, &swDrawBtn, "Draw")
+													btn.CornerRadius = 0
+													if sceneMode != 0 {
+														btn.Background = color.NRGBA{B: 250, A: 210}
+													} else {
+														btn.Background = color.NRGBA{B: 250, A: btn.Background.A}
+													}
+													return btn.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+												}),
+
+												layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+													if swInterpolBtn.Clicked(gtx) {
+														sceneMode = 1
+													}
+													btn := material.Button(th, &swInterpolBtn, "Interpolate")
+													btn.CornerRadius = 0
+													if sceneMode != 1 {
+														btn.Background = color.NRGBA{B: 250, A: 210}
+													} else {
+														btn.Background = color.NRGBA{B: 250, A: btn.Background.A}
+													}
+													return btn.Layout(gtx)
+												}),
+											)
+										})
+									}),
 									layout.Rigid(
 										func(gtx C) D {
 											return in.Layout(gtx,
