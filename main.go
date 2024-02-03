@@ -1,12 +1,7 @@
 package main
 
 import (
-	"image"
-	"image/color"
-	"log"
-	"os"
-	"runtime/pprof"
-	"time"
+	"math"
 
 	"gioui.org/app"
 	"gioui.org/io/event"
@@ -21,6 +16,18 @@ import (
 	"gioui.org/widget/material"
 	"gioui.org/x/colorpicker"
 	"gioui.org/x/component"
+	"strconv"
+
+	// "github.com/expr-lang/expr"
+	"image"
+	"image/color"
+	"log"
+	"os"
+	"runtime/pprof"
+	"time"
+
+	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/vm"
 	ts "github.com/tinyspline/go"
 	"golang.org/x/exp/shiny/materialdesign/icons"
 )
@@ -62,6 +69,17 @@ var pts []float64
 var spline *Sp
 var dragPt int
 
+var interpolPts []float64
+var isInterpolated bool
+var interpolSpline *Sp
+
+var runTime time.Time
+var maxRunTime time.Duration
+var uProgram *vm.Program
+var maxVal any
+var errorModal *component.ModalLayer
+var eqModeSwitchIsPeriodic widget.Bool
+
 var showSettings bool
 var state *colorpicker.State
 
@@ -70,8 +88,11 @@ var sceneMode int
 var xIcon *widget.Icon
 
 func draw(window *app.Window) error {
+	//TODO: Set this in input
+	maxRunTime = time.Second * 4
 
 	spline = &Sp{degree: 3}
+	interpolSpline = &Sp{degree: 3}
 
 	var ops op.Ops
 	events := make(chan event.Event)
@@ -85,9 +106,18 @@ func draw(window *app.Window) error {
 	var modalBtn widget.Clickable
 	var swInterpolBtn widget.Clickable
 	var swDrawBtn widget.Clickable
+	var eqEditor widget.Editor
+	var eqPEditor widget.Editor
+	var durEditor widget.Editor
+	eqEditor.Filter = "t1234567890+-*^"
+	durEditor.Filter = "1234567890"
+
+	var doInterpolBtn widget.Clickable
+	var runMoverBtn widget.Clickable
 
 	settingModal := component.NewModal()
 	colorModal := NewColorPickerWithModal(th.ContrastBg)
+	errorModal = component.NewModal()
 
 	ic, _ := widget.NewIcon(icons.NavigationClose)
 	xIcon = ic
@@ -117,6 +147,7 @@ func draw(window *app.Window) error {
 				acks <- struct{}{}
 				return e.Err
 			case system.FrameEvent:
+
 				gtx := layout.NewContext(&ops, e)
 
 				in := layout.UniformInset(unit.Dp(8))
@@ -127,7 +158,12 @@ func draw(window *app.Window) error {
 							gtx,
 							layout.Rigid(func(gtx C) D {
 								w, h := screenWidth*.75, screenHeight
-								drawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
+								if sceneMode == 0 {
+
+									DrawScene(gtx.Ops, gtx.Queue, a1, int(w), h)
+								} else {
+									InterpolScene(gtx.Ops, gtx.Queue, a1, int(w), h)
+								}
 								return D{Size: image.Pt(int(w), h)}
 							}),
 							layout.Flexed(1, func(gtx C) D {
@@ -192,7 +228,7 @@ func draw(window *app.Window) error {
 												func(gtx C) D {
 													text := "To bezier curves"
 													if transformBtn.Clicked(gtx) {
-														settingModal.VisibilityAnimation.ToggleVisibility(time.Now())
+														spline.curve = spline.curve.ToBeziers()
 													}
 													btn := material.Button(th, &transformBtn, text)
 													return btn.Layout(gtx)
@@ -236,6 +272,149 @@ func draw(window *app.Window) error {
 											)
 										},
 									),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										if sceneMode == 1 {
+											return layout.Dimensions{}
+										}
+										return in.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													dv := component.Divider(th)
+													return dv.Layout(gtx)
+
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Label(th, unit.Sp(16), "Input move Equation")
+													return lbl.Layout(gtx)
+
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Height: unit.Dp(9)}.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															lbl := material.Label(th, unit.Sp(15), "Periodic")
+															return lbl.Layout(gtx)
+														}),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															return layout.Spacer{Width: unit.Dp(5)}.Layout(gtx)
+														}),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															sw := material.Switch(th, &eqModeSwitchIsPeriodic, "Periodic")
+															return sw.Layout(gtx)
+														}),
+													)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Height: unit.Dp(9)}.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													if eqModeSwitchIsPeriodic.Value {
+														return layout.Dimensions{}
+													}
+													return widget.Border{Color: color.NRGBA{A: 255, B: 180}, CornerRadius: unit.Dp(5), Width: unit.Dp(1)}.Layout(gtx,
+														func(gtx layout.Context) layout.Dimensions {
+															return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+																edtr := material.Editor(th, &eqEditor, "u(t)")
+																edtr.TextSize = unit.Sp(18)
+
+																return edtr.Layout(gtx)
+															})
+														})
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													if !eqModeSwitchIsPeriodic.Value {
+														return layout.Dimensions{}
+													}
+													return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															lbl := material.Label(th, unit.Sp(18), "Sin(")
+															return lbl.Layout(gtx)
+														}),
+														layout.Rigid(
+															func(gtx layout.Context) layout.Dimensions {
+
+																return widget.Border{Color: color.NRGBA{A: 255, B: 180}, CornerRadius: unit.Dp(5), Width: unit.Dp(1)}.Layout(gtx,
+																	func(gtx layout.Context) layout.Dimensions {
+																		return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+																			edtr := material.Editor(th, &eqPEditor, "u(t) = sin(f(t))")
+																			edtr.TextSize = unit.Sp(18)
+
+																			return edtr.Layout(gtx)
+																		})
+																	})
+															}),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															lbl := material.Label(th, unit.Sp(18), ")")
+															return lbl.Layout(gtx)
+														}),
+													)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													if runMoverBtn.Clicked(gtx) {
+														runTime = time.Now()
+														parsedMaxDuration, err := strconv.Atoi(durEditor.Text())
+														if eqModeSwitchIsPeriodic.Value {
+															uProgram, _ = expr.Compile(eqPEditor.Text())
+														} else {
+
+															uProgram, _ = expr.Compile(eqEditor.Text())
+														}
+														if err != nil {
+															errorModal.VisibilityAnimation.State = component.Visible
+														}
+														maxRunTime = time.Second * time.Duration(parsedMaxDuration)
+														env := map[string]float64{
+															"t": maxRunTime.Seconds(),
+														}
+														maxVal, _ = expr.Run(uProgram, env)
+													}
+													if spline.curve == nil || (eqModeSwitchIsPeriodic.Value && len(eqPEditor.Text()) == 0) || (!eqModeSwitchIsPeriodic.Value && len(eqEditor.Text()) == 0) || len(durEditor.Text()) == 0 {
+														gtx = gtx.Disabled()
+													}
+													btn := material.Button(th, &runMoverBtn, "Run")
+													return btn.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Label(th, unit.Sp(16), "Duration in seconds")
+													return lbl.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return widget.Border{Color: color.NRGBA{A: 255, B: 180}, CornerRadius: unit.Dp(5), Width: unit.Dp(1)}.Layout(gtx,
+														func(gtx layout.Context) layout.Dimensions {
+															return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+																edtr := material.Editor(th, &durEditor, "...seconds")
+																edtr.TextSize = unit.Sp(18)
+
+																return edtr.Layout(gtx)
+															})
+														})
+												}),
+											)
+										})
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return in.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											if sceneMode == 0 {
+												return layout.Dimensions{}
+											}
+											if doInterpolBtn.Clicked(gtx) {
+												isInterpolated = true
+											}
+											btn := material.Button(th, &doInterpolBtn, "Interpolate Points")
+											return btn.Layout(gtx)
+										})
+									}),
 								)
 							}),
 						)
@@ -285,13 +464,25 @@ func draw(window *app.Window) error {
 					)
 				}
 				settingModal.Layout(gtx, th)
+				errorModal.Duration = time.Duration(time.Millisecond * 1)
+				errorModal.Widget = func(gtx layout.Context, th *material.Theme, anim *component.VisibilityAnimation) layout.Dimensions {
+					return modalInset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Label(th, unit.Sp(18), "Expression is invalid")
+							lbl.Color = color.NRGBA{R: 0xFF, A: 0xFF}
+							return lbl.Layout(gtx)
+						})
+					})
+				}
+				errorModal.Layout(gtx, th)
 				e.Frame(gtx.Ops)
 			}
 			acks <- struct{}{}
 		}
 	}
 }
-func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
+func DrawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
+	DrawMover(ops)
 
 	for _, ev := range q.Events(tag) {
 		if x, ok := ev.(pointer.Event); ok {
@@ -320,7 +511,8 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 					} else {
 						spline.curve.SetControlPointVec2At(dragPt/2, ts.NewVec2(float64(xd), float64(yd)))
 					}
-					goto cont
+					FillScene(ops, tag, w, h, &pts)
+					return
 				}
 			case pointer.Press:
 				dragPt = -1
@@ -346,7 +538,8 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 							break
 						}
 					}
-					goto cont
+					FillScene(ops, tag, w, h, &pts)
+					return
 				}
 				for k := range pts {
 					if k%2 == 1 {
@@ -359,7 +552,8 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 						} else {
 							spline.curve.SetControlPointVec2At(k/2, ts.NewVec2(float64(x.Position.X), float64(x.Position.Y)))
 						}
-						goto cont
+						FillScene(ops, tag, w, h, &pts)
+						return
 					}
 				}
 				pts = append(pts, float64(x.Position.X), float64(x.Position.Y))
@@ -370,20 +564,89 @@ func drawScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 			}
 		}
 	}
+	FillScene(ops, tag, w, h, &pts)
+}
 
-cont:
+func DrawMover(ops *op.Ops) {
+	if runTime.IsZero() {
+		return
+	}
+	if time.Now().After(runTime.Add(maxRunTime)) {
+		runTime = time.Time{}
+		op.InvalidateOp{At: time.Time{}}.Add(ops)
+		return
+	}
+	if spline.curve == nil {
+		return
+	}
+	lapsed := time.Now().Sub(runTime)
+	env := map[string]float64{
+		"t": lapsed.Seconds(),
+	}
+	out, err := expr.Run(uProgram, env)
+	if out == nil || err != nil {
+		runTime = time.Time{}
+		errorModal.VisibilityAnimation.ToggleVisibility(time.Now())
+		return
+	}
+	switch out.(type) {
+	case int:
+		runTime = time.Time{}
+		errorModal.VisibilityAnimation.State = component.Visible
+		return
 
-	if len(pts) != 0 {
+	}
+	var u float64
+	if eqModeSwitchIsPeriodic.Value {
+		u = math.Abs(math.Sin(out.(float64)))
+	} else {
+		u = out.(float64) / maxVal.(float64)
+	}
+	net := spline.curve.Eval(u)
+	pts := net.GetResult()
+	op.InvalidateOp{At: time.Time{}}.Add(ops)
+	DrawPoints(&pts, ops, color.NRGBA{R: 255, A: 255})
+}
+
+func FillScene(ops *op.Ops, tag any, w, h int, pts *[]float64) {
+
+	if len(*pts) != 0 {
 		if spline != nil && spline.curve != nil {
-			pts = spline.curve.GetControlPoints()
+			*pts = spline.curve.GetControlPoints()
 		}
-		if len(pts) >= 4 {
-			p := DrawLine(&pts, 2, ops)
+		if len(*pts) >= 4 {
+			p := DrawLine(pts, 2, ops)
 			c := color.NRGBA{G: 0xFF, A: 0xFF}
 			paint.FillShape(ops, c, clip.Stroke{Path: p.End(), Width: 3}.Op())
 			DrawSpline(spline, 30, ops)
 		}
-		DrawPoints(&pts, ops, color.NRGBA{G: 125, R: 125, A: 255})
+		DrawPoints(pts, ops, color.NRGBA{G: 125, R: 125, A: 255})
+	}
+	area := clip.Rect(image.Rect(0, 0, w, h)).Push(ops)
+	pointer.InputOp{
+		Tag:   tag,
+		Kinds: pointer.Press | pointer.Release | pointer.Drag,
+		// ScrollBounds: image.Rect(0, 0, w, h),
+	}.Add(ops)
+	area.Pop()
+}
+
+func InterpolScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
+
+	for _, ev := range q.Events(tag) {
+		if x, ok := ev.(pointer.Event); ok {
+			switch x.Kind {
+			case pointer.Press:
+				interpolPts = append(interpolPts, float64(x.Position.X), float64(x.Position.Y))
+			}
+		}
+	}
+
+	DrawPoints(&interpolPts, ops, color.NRGBA{G: 125, R: 125, A: 255})
+	if isInterpolated {
+		interpolSpline.curve = ts.BSplineInterpolateCatmullRom(interpolPts, 2)
+		DrawSpline(interpolSpline, 30, ops)
+		return
 	}
 	area := clip.Rect(image.Rect(0, 0, w, h)).Push(ops)
 	pointer.InputOp{
