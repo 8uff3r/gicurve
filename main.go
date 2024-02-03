@@ -604,7 +604,7 @@ func DrawMover(ops *op.Ops) {
 	net := spline.curve.Eval(u)
 	pts := net.GetResult()
 	op.InvalidateOp{At: time.Time{}}.Add(ops)
-	DrawPoints(&pts, ops, color.NRGBA{R: 255, A: 255})
+	DrawPoints(&pts, ops, color.NRGBA{R: 255, G: 140, A: 255}, 16)
 }
 
 func FillScene(ops *op.Ops, tag any, w, h int, pts *[]float64) {
@@ -619,7 +619,7 @@ func FillScene(ops *op.Ops, tag any, w, h int, pts *[]float64) {
 			paint.FillShape(ops, c, clip.Stroke{Path: p.End(), Width: 3}.Op())
 			DrawSpline(spline, 30, ops)
 		}
-		DrawPoints(pts, ops, color.NRGBA{G: 125, R: 125, A: 255})
+		DrawPoints(pts, ops, color.NRGBA{G: 125, R: 125, A: 255}, 8)
 	}
 	area := clip.Rect(image.Rect(0, 0, w, h)).Push(ops)
 	pointer.InputOp{
@@ -641,7 +641,7 @@ func InterpolScene(ops *op.Ops, q event.Queue, tag any, w, h int) {
 		}
 	}
 
-	DrawPoints(&interpolPts, ops, color.NRGBA{G: 125, R: 125, A: 255})
+	DrawPoints(&interpolPts, ops, color.NRGBA{G: 125, R: 125, A: 255}, 8)
 	if isInterpolated {
 		interpolSpline.curve = ts.BSplineInterpolateCatmullRom(interpolPts, 2)
 		DrawSpline(interpolSpline, 30, ops)

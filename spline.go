@@ -61,13 +61,14 @@ func DrawLine(pts *[]float64, dim int, ops *op.Ops) clip.Path {
 	}
 	return p
 }
-func DrawPoints(pts *[]float64, ops *op.Ops, c color.NRGBA) {
+func DrawPoints(pts *[]float64, ops *op.Ops, c color.NRGBA, size int) {
 	for k := range *pts {
 		if k%2 == 1 {
 			continue
 		}
 		x, y := (*pts)[k], (*pts)[k+1]
-		circle := clip.Ellipse{Min: image.Pt(int(x)-4, int(y)-4), Max: image.Pt(int(x)+4, int(y)+4)}
+		r := size / 2
+		circle := clip.Ellipse{Min: image.Pt(int(x)-r, int(y)-r), Max: image.Pt(int(x)+r, int(y)+r)}
 		paint.FillShape(ops, c, circle.Op(ops))
 	}
 }
